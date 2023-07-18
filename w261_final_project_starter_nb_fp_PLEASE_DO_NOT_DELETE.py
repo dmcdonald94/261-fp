@@ -6,6 +6,55 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC
+# MAGIC ## Reading/Writing to Shared Data
+# MAGIC
+
+# COMMAND ----------
+
+## Place this cell in any team notebook that needs access to the team cloud storage.
+
+
+# The following blob storage is accessible to team members only (read and write)
+# access key is valid til TTL
+# after that you will need to create a new SAS key and authenticate access again via DataBrick command line
+secret_scope = "261-fp-scope"
+secret_key   = "261-fp-scope-key"    
+blob_container  = "dmcdonald-261-fp-container"       # The name of your container created in https://portal.azure.com
+storage_account = "dmcdonald" # The name of your Storage account created in https://portal.azure.com
+team_blob_url        = f"wasbs://{blob_container}@{storage_account}.blob.core.windows.net"  #points to the root of your team storage bucket
+
+# the 261 course blob storage is mounted here on the DataBricks workspace.
+mids261_mount_path      = "/mnt/mids-w261"
+
+# SAS Token: Grant the team limited access to Azure Storage resources
+spark.conf.set(
+  f"fs.azure.sas.{blob_container}.{storage_account}.blob.core.windows.net",
+  dbutils.secrets.get(scope = secret_scope, key = secret_key)
+)
+import pandas as pd
+pdf = pd.DataFrame([[1, 2, 3, "Jane"], [2, 2,2, None], [12, 12,12, "John"]], columns=["x", "y", "z", "a_string"])
+df = spark.createDataFrame(pdf) # Create a Spark dataframe from a pandas DF
+
+# The following can write the dataframe to the team's Cloud Storage  
+# Navigate back to your Storage account in https://portal.azure.com, to inspect the partitions/files.
+df.write.parquet(f"{team_blob_url}/test", mode='overwrite')
+
+
+
+# see what's in the blob storage root folder 
+display(dbutils.fs.ls(f"{team_blob_url}"))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC
+# MAGIC # Abstract
+# MAGIC
+
+# COMMAND ----------
+
 from pyspark.sql.functions import col
 print("Welcome to the W261 final project John!!") #hey everyone!Hi HELLO good morning
 
