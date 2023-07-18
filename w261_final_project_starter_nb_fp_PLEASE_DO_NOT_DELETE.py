@@ -48,6 +48,48 @@ display(dbutils.fs.ls(f"{team_blob_url}"))
 
 # COMMAND ----------
 
+# show some data from shared cloud storage
+display(dbutils.fs.ls(f"{mids261_mount_path}/datasets_final_project_2022"))
+
+# COMMAND ----------
+
+df_airlines = spark.read.parquet(f"{mids261_mount_path}/datasets_final_project/parquet_airlines_data_3m/")# Load the Jan 1st, 2015 for Weather
+df_weather =  spark.read.parquet(f"{mids261_mount_path}/datasets_final_project/weather_data/*")
+df_weather = df_weather.filter(df_weather.DATE < "2015-01-02T00:00:00.000").cache()
+display(df_weather)
+
+# COMMAND ----------
+
+# This command will write to your Cloud Storage if right permissions are in place. 
+# Navigate back to your Storage account in https://portal.azure.com, to inspect the files.
+df_weather.write.parquet(f"{team_blob_url}/test", mode='overwrite')
+
+# COMMAND ----------
+
+# see what's in the parquet folder 
+display(dbutils.fs.ls(f"{team_blob_url}/test"))
+
+# COMMAND ----------
+
+# Load it the previous DF as a new DF
+df_weather_new = spark.read.parquet(f"{team_blob_url}/test")
+display(df_weather_new)
+
+# COMMAND ----------
+
+print(f"Your new df_weather has {df_weather_new.count():,} rows.")
+
+
+# COMMAND ----------
+
+df_weather_new.select("DATE").collect()[0]
+
+# COMMAND ----------
+
+display(dbutils.fs.ls(f"{mids261_mount_path}/HW5"))
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC
 # MAGIC # Abstract
