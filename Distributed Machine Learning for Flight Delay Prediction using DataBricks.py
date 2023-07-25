@@ -295,7 +295,6 @@ plt.show()
 
 # COMMAND ----------
 
-
 df_flights_nonnullordest = df_flights.select(['OP_UNIQUE_CARRIER','ARR_DELAY', 'DEP_DELAY','ORIGIN_CITY_NAME', 'DEST_CITY_NAME']).na.drop()
 
 carrier_delay = df_flights_nonnullordest.groupBy('OP_UNIQUE_CARRIER').agg(mean('ARR_DELAY')).toPandas()
@@ -617,7 +616,3 @@ plt.show()
 # MAGIC # Pipeline
 # MAGIC
 # MAGIC ![Block Diagram](files/tables/261_Block_Diagram-3.png)
-
-# COMMAND ----------
-
-

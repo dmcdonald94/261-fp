@@ -24,10 +24,6 @@
 
 # COMMAND ----------
 
-df_weather = spark.read.parquet(f"{data_BASE_DIR}datasets_final_project_2022/parquet_weather_data_3m/")
-
-# COMMAND ----------
-
 # imports
 import seaborn as sns
 
@@ -55,6 +51,28 @@ raw_df.printSchema()
 # COMMAND ----------
 
 print(f"# of columns = {len(raw_df.columns)}")
+
+# COMMAND ----------
+
+input_features_df = raw_df.select(*raw_df.columns)
+
+# Step 2: Find the families of input features by extracting the common prefixes
+input_feature_cols = input_features_df.columns
+families = set()
+for col in input_feature_cols:
+    for i in range(1, len(col)):
+        families.add(col[:i])
+
+# Step 3: Count the occurrence of each family
+family_count = {}
+for col in input_feature_cols:
+    for family in families:
+        if col.startswith(family):
+            family_count[family] = family_count.get(family, 0) + 1
+
+# Step 4: Print the families and their counts
+for family, count in family_count.items():
+    print(f"Family: {family}, Count: {count}")
 
 # COMMAND ----------
 
@@ -121,10 +139,14 @@ print(f"{(1 - final_count / initial_count) * 100}% of data was missing label, an
 
 # COMMAND ----------
 
-# not sure whether or not to drop yet, so lets just look at what data is missing.
+missing_features_df = df.select(*[
+    (
+        count(when((isnan(c) | col(c).isNull()), c)) if t not in ("timestamp")
+        else count(when(col(c).isNull(), c))
+    ).alias(c)
+    for c, t in df.dtypes if c in df.columns
+]).cache()
 
-# lets find proportion of data missing for each column
-missing_features_df = df.select([count(when(isnan(c) | col(c).isNull(), c)).alias(c) for c in df.columns]).cache()
 display(missing_features_df)
 
 # COMMAND ----------
@@ -137,7 +159,11 @@ display(missing_features_df)
 
 # COMMAND ----------
 
-cols_not_missing = [col_name for col_name in df.columns if not missing_features_df.filter(col(col_name) == 0).count()]
+
+
+# COMMAND ----------
+
+cols_missing = [col_name for col_name in missing_features_df.columns if not missing_features_df.filter(col(col_name) == 0).count()]
 
 # for col in missing_features_df.columns:
 #     if missing_features_df.select(col) != 0:
@@ -146,7 +172,7 @@ cols_not_missing = [col_name for col_name in df.columns if not missing_features_
 
 # COMMAND ----------
 
-missing_features_df = missing_features_df.select(*cols_not_missing)
+missing_features_df = missing_features_df.select(*cols_missing)
 display(missing_features_df)
 
 
@@ -172,7 +198,7 @@ df.select(["flight_datetime", "FL_DATE", "CRS_DEP_TIME", "DEP_DELAY"]).take(4)
 # COMMAND ----------
 
 # FEATURES TO USE
-FEATURES_COLS = ['flight_datetime', 'weather_datetime', 'HourlyPrecipitation', 'HourlyPresentWeatherType', 'HourlySkyConditions', 'HourlyVisibility', 'HourlyWindGustSpeed', 'HourlyWindSpeed']
+FEATURES_COLS = ['flight_datetime', 'weather_datetime', 'HourlyPrecipitation', 'HourlyVisibility', 'HourlyWindGustSpeed', 'HourlyWindSpeed']
 LABEL = ['DEP_DEL15']
 
 COLS_TO_USE = FEATURES_COLS + LABEL
@@ -191,7 +217,7 @@ experiment_df = experiment_df.withColumns({name: col(name).cast('float') for nam
 
 # COMMAND ----------
 
-experiment_df.select("*").head(2)
+experiment_df.select("*").take(2)
 
 # COMMAND ----------
 
@@ -217,31 +243,102 @@ experiment_df.printSchema()
 
 # COMMAND ----------
 
-df = spark.createDataFrame([("2016-03-11 09:00:07", 1)]).toDF("date", "val")
-
-w = df.groupBy(window("date", "5 seconds")).agg(sum("val").alias("sum"))
-w.select(w.window.start.cast("string").alias("start"),w.window.end.cast("string").alias("end"), "sum").collect()
+FEATURES_COLS[2:]
 
 # COMMAND ----------
 
 # define windows
 # df.select(["flight_datetime","weather_datetime"])
 
+# w = experiment_df.groupby(window("weather_datetime", "4 hours")).agg(mean("HourlyPrecipitation").alias("mean"))
+# w.select(w.window.start.cast("string").alias("start"),
+#                w.window.end.cast("string").alias("end"), "mean").collect()
 
-w = experiment_df.groupby(window("weather_datetime", "4 hours")).agg(mean("HourlyPrecipitation").alias("mean"))
-w.select(w.window.start.cast("string").alias("start"),
-               w.window.end.cast("string").alias("end"), "mean").collect()
+
+
+from pyspark.sql.window import Window
+days = lambda i: i * 86400
+hours = lambda i: i * 3600
+
+
+w = (Window.orderBy(col("weather_datetime").cast('long')).rangeBetween(-hours(6), -hours(2)))
+# w = (Window.orderBy(col("weather_datetime").cast("long")).rangeBetween(-hours(6), -hours(2)))
+
+print(f"{len(experiment_df.columns) = }")
+print(f"{experiment_df.count() = }")
+
+for column in FEATURES_COLS[2:]:
+    experiment_df = experiment_df.withColumn(f"rolling_{column}_average", mean(column).over(w))    
+print(f"{len(experiment_df.columns) = }")
+print(f"{experiment_df.count() = }")
+
+FEATURES_COLS = [f"rolling_{column}_average"  if column.find("_datetime") == -1 else column for column in FEATURES_COLS]
+
+
+
 
 
 # COMMAND ----------
 
-w.window.take
+missing_exp_df = experiment_df.select(*[
+    (
+        count(when((isnan(c) | col(c).isNull()), c)) if t not in ("timestamp", "date")
+        else count(when(col(c).isNull(), c))
+    ).alias(c)
+    for c, t in experiment_df.dtypes if c in FEATURES_COLS
+])
+
+display(missing_exp_df)
+
 
 # COMMAND ----------
 
-lr = LogisticRegression()
-grid = ParamGridBuilder().addGrid(lr.maxIter, [0,1,5]).build()
-evaluator = BinaryClassificationEvaluator()
+# lets just drop nans to get things to run.
+exp_df_count = experiment_df.count()
+print(f"{exp_df_count = }")
+dropped_exp_df = experiment_df.na.drop()
+dropped_exp_df_count = dropped_exp_df.count()
+print(f"{dropped_exp_df_count = }")
+print(f"Dropped {dropped_exp_df_count / exp_df_count * 100}% of data.")
+
+# COMMAND ----------
+
+from pyspark.ml.feature import StandardScaler, VectorAssembler
+vectorAssembler = VectorAssembler(inputCols = FEATURES_COLS[2:], outputCol = 'features', handleInvalid='skip')
+texperiment_df = vectorAssembler.transform(experiment_df)
+texperiment_df.select(["features"]).show(3)
+
+
+
+
+
+# COMMAND ----------
+
+standardScaler = StandardScaler()
+standardScaler.setInputCol("features")
+standardScaler.setOutputCol("features_scaled")
+model = standardScaler.fit(texperiment_df)
+texperiment_df = model.transform(texperiment_df)
+
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+LABEL
+
+# COMMAND ----------
+
+from pyspark.ml.classification import LogisticRegression
+from pyspark.ml.evaluation import BinaryClassificationEvaluator
+from pyspark.ml.tuning import ParamGridBuilder
+lr = LogisticRegression(featuresCol='features_scaled', labelCol = LABEL[0])
+
+lr.fit(texperiment_df)
+# grid = ParamGridBuilder().addGrid(lr.maxIter, [0,1,5]).build()
+# evaluator = BinaryClassificationEvaluator()
 
 # COMMAND ----------
 
